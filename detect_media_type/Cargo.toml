@@ -1,0 +1,9 @@
+[package]
+name = "detect_media_type"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rule_gen = {path= '../rule_gen' }
+rule_def = {path='../rule_def'}
+log = "0.4.17"
