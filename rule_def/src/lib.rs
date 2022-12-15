@@ -1,12 +1,13 @@
 extern crate serde_derive;
 
+use std::collections::HashMap;
 use serde_derive::Serialize;
 use std::str::FromStr;
 
 #[derive(Clone, Serialize, Debug)]
-pub struct MediaTypeRule {
-    pub media_type: String,
-    pub rules: Vec<Rule>,
+pub struct MediaTypeRegistry {
+    pub rules_registry: HashMap<String, Vec<Rule>>,
+    pub child_types: HashMap<String, Vec<String>>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -65,8 +66,10 @@ pub struct GlobRule {
 
 #[derive(Clone, Serialize, Debug)]
 pub enum GlobType {
-    Equals,
     Regex,
+    EndsWith,
+    StartsWith,
+    Contains,
 }
 
 #[derive(Clone, Serialize, Debug)]

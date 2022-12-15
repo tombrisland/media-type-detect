@@ -2,7 +2,7 @@
 extern crate rule_def;
 extern crate xml;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
@@ -14,7 +14,7 @@ use xml::EventReader;
 use xml::name::OwnedName;
 use xml::reader::XmlEvent;
 
-use rule_def::{GlobRule, GlobType, MagicRule, Match, MediaTypeRule, Multi, Offset, Rule, Single};
+use rule_def::{GlobRule, GlobType, MagicRule, Match, MediaTypeRegistry, Multi, Offset, Rule, Single};
 
 const TIKA_MIMETYPES_PATH: &str = "./tika-mimetypes.xml";
 const OUT_FILE: &str = "rules.rs";
@@ -36,7 +36,7 @@ fn main() {
             .expect("Could not find tika-mimetypes.xml"));
 
     // Initialise parser and extract rules from XML
-    let media_type_rules: Vec<MediaTypeRule> = parse_xml_rules(EventReader::new(reader));
+    let type_registry: MediaTypeRegistry = parse_xml_rules(EventReader::new(reader));
 
     let path: PathBuf = Path::new(&out_dir).join(OUT_FILE);
 
@@ -49,13 +49,13 @@ fn main() {
 
     let mut writer: BufWriter<File> = BufWriter::new(out_file);
 
-    let mut output_string: String = uneval::to_string(media_type_rules)
+    let mut output_string: String = uneval::to_string(type_registry)
         .expect("Failed to serialise rules as rust source");
 
-    // Remove any extra code to reduce binary size
-    for remove_str in REMOVE_FROM_OUTPUT {
-        output_string = output_string.replace(remove_str, EMPTY);
-    }
+    // // Remove any extra code to reduce binary size
+    // for remove_str in REMOVE_FROM_OUTPUT {
+    //     output_string = output_string.replace(remove_str, EMPTY);
+    // }
 
     writer.write_all(output_string.as_bytes()).unwrap();
 }
@@ -65,6 +65,7 @@ const MIME_TYPE_FIELD: &str = "type";
 
 const GLOB_ELEMENT: &str = "glob";
 const PATTERN_FIELD: &str = "pattern";
+const ASTERISK: &str = "*";
 const IS_REGEX_FIELD: &str = "isregex";
 
 const MAGIC_ELEMENT: &str = "magic";
@@ -74,6 +75,8 @@ const MATCH_ELEMENT: &str = "match";
 const OFFSET_FIELD: &str = "offset";
 const VALUE_FIELD: &str = "value";
 const MIN_SHOULD_MATCH_FIELD: &str = "minShouldMatch";
+
+const SUB_CLASS_ELEMENT: &str = "sub-class-of";
 
 // Create a match condition from an XML attribute
 fn create_match_condition(attributes: &Vec<OwnedAttribute>) -> Match {
@@ -100,15 +103,29 @@ fn create_match_condition(attributes: &Vec<OwnedAttribute>) -> Match {
 
 // Create a glob condition from an XML attribute
 fn create_glob_rule(attributes: &Vec<OwnedAttribute>) -> GlobRule {
+    // Mandatory field on all glob entries
+    let pattern: String = extract_xml_field(&attributes, PATTERN_FIELD).unwrap();
+
     let glob_type = match extract_xml_field(&attributes, IS_REGEX_FIELD) {
         Some(_) => GlobType::Regex,
-        // Default to equals if field unset
-        _ => GlobType::Equals
+        // Default to contains if field unset
+        _ => {
+            // Use position of asterisks to determine GlobType
+            if pattern.starts_with(ASTERISK) {
+                if pattern.ends_with(ASTERISK) {
+                    GlobType::Contains
+                } else {
+                    GlobType::EndsWith
+                }
+            } else {
+                GlobType::StartsWith
+            }
+        }
     };
 
     GlobRule {
-        // Mandatory field on all glob entries
-        pattern: extract_xml_field(&attributes, PATTERN_FIELD).unwrap(),
+        // Asterisk behaviour is covered by GlobType
+        pattern: pattern.replace(ASTERISK, EMPTY),
         glob_type,
     }
 }
@@ -124,8 +141,9 @@ fn create_magic_rule(attributes: &Vec<OwnedAttribute>) -> MagicRule {
     MagicRule { priority, conditions: vec![] }
 }
 
-fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> Vec<MediaTypeRule> {
-    let mut media_type_rules: Vec<MediaTypeRule> = vec![];
+fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegistry {
+    let mut rules_registry: HashMap<String, Vec<Rule>> = Default::default();
+    let mut child_types: HashMap<String, Vec<String>> = Default::default();
 
     // Parent XML elements
     let mut elements: VecDeque<XmlElement> = Default::default();
@@ -133,6 +151,8 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> Vec<MediaTypeR
     // Temporary store of rules per media type
     let mut curr_rules: Vec<Rule> = vec![];
     let mut curr_magic: Option<MagicRule> = None;
+    // If this type has a parent
+    let mut curr_parent: Option<String> = None;
 
     // Parent nested match blocks
     let mut nested_match_blocks: Vec<Match> = vec![];
@@ -147,6 +167,8 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> Vec<MediaTypeR
                     MATCH_ELEMENT => nested_match_blocks.push(create_match_condition(&attributes)),
                     // Create a magic entry to add nested rules onto
                     MAGIC_ELEMENT => curr_magic = Some(create_magic_rule(&attributes)),
+                    // Add a relationship into the children map
+                    SUB_CLASS_ELEMENT => curr_parent = Some(extract_xml_field(&attributes, MIME_TYPE_FIELD).unwrap()),
                     _ => {}
                 }
 
@@ -185,7 +207,16 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> Vec<MediaTypeR
                         // Mime type is a mandatory field
                         let media_type: String = extract_xml_field(&attributes, MIME_TYPE_FIELD).unwrap();
 
-                        media_type_rules.push(MediaTypeRule { media_type, rules: curr_rules.clone() });
+                        if let Some(parent) = curr_parent.clone() {
+                            // Insert a new entry or add to the existing one
+                            if let Some(children) = child_types.get_mut(&parent) {
+                                children.push(media_type.clone());
+                            } else {
+                                child_types.insert(parent, vec![media_type.clone()]);
+                            }
+                        }
+
+                        rules_registry.insert(media_type, curr_rules.clone());
 
                         // Clear rules for the next entry
                         curr_rules.clear();
@@ -197,7 +228,10 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> Vec<MediaTypeR
         }
     };
 
-    media_type_rules
+    MediaTypeRegistry {
+        rules_registry: rules_registry,
+        child_types,
+    }
 }
 
 // Retrieve the value of an XML field from an attribute
