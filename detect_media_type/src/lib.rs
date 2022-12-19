@@ -1,60 +1,63 @@
-use std::cmp::min;
+#![feature(let_chains)]
 
-use log::{info, Level, Metadata, Record};
+use std::ffi::OsStr;
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 
-use rule_def::{Match, MediaTypeRegistry, Rule};
-use rule_gen::load_type_registry;
+use log::{debug, info};
 
-pub struct Logger;
+use rule_def::{MediaTypeRegistry, Rule};
 
-impl log::Log for Logger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Info
-    }
+use crate::glob::run_glob;
+use crate::magic::run_magic;
 
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            println!("{} - {}", record.level(), record.args());
-        }
-    }
+mod magic;
+mod glob;
 
-    fn flush(&self) {}
+pub fn detect_file_type(path: &Path, media_type_registry: &MediaTypeRegistry) -> Option<String> {
+    let file_name: Option<String> = path.file_name()
+        // Convert to String representation
+        .map(|name: &OsStr| name.to_string_lossy().into_owned());
+
+    let mut buf: Vec<u8> = vec![0; 1024];
+
+    File::open(&path).map(|mut file: File| {
+        file.read(buf.as_mut_slice()).expect("Failed to read bytes from file");
+
+        detect_type(&file_name, buf.as_slice(), media_type_registry)
+    }).unwrap()
 }
 
-static NO_TYPE_FILTER: Vec<String> = vec![];
-
-fn detect_type(file_name: &String, registry: &MediaTypeRegistry) {
-    // TODO can't recurse
-    match run_all_rules(file_name, &registry) {
+fn detect_type(
+    file_name: &Option<String>,
+    buf: &[u8],
+    registry: &MediaTypeRegistry,
+) -> Option<String> {
+    match run_rules(file_name, buf, &registry, &registry.root_types) {
         Some(parent_type) => {
             // Are there any children of this type?
-            if let Some(children) = registry.child_types.get(&parent_type) {
-                run_filtered_rules(file_name, registry, children);
-            } else {
-                Some(parent_type)
-            }
+            let child_type: Option<String> = registry.sub_types.get(&parent_type)
+                .and_then(|children| run_rules(file_name, buf, registry, children));
+
+            // If no child was found return parent
+            child_type.or(Some(parent_type))
         }
+        // Nothing detected
         None => None
     }
 }
 
-fn run_rule_set(file_name: &String, rules: &Vec<Rule>) -> bool {
-    return rules.iter()
-        // Iterate each rule within the media type
-        .map(|rule| match rule {
-            // Check if the filename glob matches
-            Rule::Glob(glob) => file_name.contains(&glob.pattern),
-            Rule::Magic(_) => false,
-        })
-        .any(|result| result == true);
-}
+fn run_rules(
+    file_name: &Option<String>,
+    buf: &[u8],
+    type_registry: &MediaTypeRegistry,
+    types: &Vec<String>) -> Option<String> {
+    for media_type in types {
+        debug!("Checking rule for {}", media_type);
 
-fn run_filtered_rules(file_name: &String, registry: &MediaTypeRegistry, type_filter: &Vec<String>) -> Option<String> {
-    for media_type in type_filter {
-        if let Some(rule_set) = registry.rules_registry.get(media_type) {
-            info!("Checking rule for {}", media_type);
-
-            if run_rule_set(&file_name, rule_set) {
+        if let Some(rule_set) = type_registry.rules_registry.get(media_type) {
+            if run_rule_set(file_name, buf, rule_set) {
                 info!("Matched item as media type {}", media_type);
 
                 return Some(media_type.clone());
@@ -62,48 +65,20 @@ fn run_filtered_rules(file_name: &String, registry: &MediaTypeRegistry, type_fil
         }
     }
 
-    // No match found within the filtered rules
-    None
-}
-
-fn run_all_rules(file_name: &String, media_type_registry: &MediaTypeRegistry) -> Option<String> {
-    for (media_type, rule_set) in &media_type_registry.rules_registry {
-        info!("Checking rule for {}", media_type);
-
-        if run_rule_set(&file_name, rule_set) {
-            info!("Matched item as media type {}", media_type);
-
-            return Some(media_type.clone());
-        }
-    }
-
     // No rules matched
     None
 }
 
-#[cfg(test)]
-mod tests {
-    use log::LevelFilter;
+// TODO will glob be useful - is there an extension?
+// TODO config - trust extension?
 
-    use rule_def::MediaTypeRegistry;
-    use rule_gen::load_type_registry;
-
-    use crate::{Logger, run_filtered_rules};
-
-    static LOG: Logger = Logger;
-
-    #[test]
-    fn it_works() {
-        log::set_logger(&LOG)
-            .map(|()| log::set_max_level(LevelFilter::Info))
-            .expect("Logger failed to initialise");
-
-        let registry: MediaTypeRegistry = load_type_registry();
-
-        let file_name: String = "file.json".into();
-
-        let option = run_filtered_rules(file_name, &registry);
-
-        println!("Loaded {:?} rules; matched {:?}", registry.rules_registry.len(), option)
-    }
+fn run_rule_set(file_name: &Option<String>, buf: &[u8], rules: &Vec<Rule>) -> bool {
+    return rules.iter()
+        // Iterate each rule within the media type
+        .map(|rule| match rule {
+            // Check if the filename glob matches
+            Rule::Glob(glob) => run_glob(file_name, &glob),
+            Rule::Magic(magic) => run_magic(buf, &magic),
+        })
+        .any(|result| result == true);
 }

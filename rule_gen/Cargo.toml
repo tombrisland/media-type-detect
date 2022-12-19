@@ -12,3 +12,12 @@ xml-rs = "0.8.4"
 serde = "1.0.149"
 serde_derive = "1.0.149"
 uneval = "0.2.4"
+
+
+[dev-dependencies]
+rule_def = { path = '../rule_def' }
+xml-rs = "0.8.4"
+
+serde = "1.0.149"
+serde_derive = "1.0.149"
+uneval = "0.2.4"

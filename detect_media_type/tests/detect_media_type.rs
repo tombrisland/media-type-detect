@@ -38,7 +38,7 @@ fn it_works() {
 
     let after_load = Instant::now();
 
-    let path = Path::new("/Users/tomb/code/rust-mimetypes/detect_media_type/tests/image_jpeg");
+    let path = Path::new("./tests/data/image_jpeg");
 
     let option = detect_file_type(path, &registry);
 

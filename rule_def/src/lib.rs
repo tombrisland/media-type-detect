@@ -6,8 +6,11 @@ use std::str::FromStr;
 
 #[derive(Clone, Serialize, Debug)]
 pub struct MediaTypeRegistry {
+    pub root_types: Vec<String>,
+    // Map of parent types to their children
+    pub sub_types: HashMap<String, Vec<String>>,
+    // Map of type to rules
     pub rules_registry: HashMap<String, Vec<Rule>>,
-    pub child_types: HashMap<String, Vec<String>>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -56,6 +59,22 @@ pub struct Single {
     pub bytes: Vec<u8>,
     // Any OR'ed conditions with this magic
     pub conditions: Vec<Single>,
+}
+
+pub enum MatchValueType {
+    String,
+    // TODO support some of these
+    // Regex,
+    // StringIgnoreCase,
+    // UnicodeLe,
+    // UnicodeBe,
+    // Byte,
+    // Host16,
+    // Little16,
+    // Big16,
+    // Host32,
+    // Little32,
+    // Big32,
 }
 
 #[derive(Clone, Serialize, Debug)]

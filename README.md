@@ -11,3 +11,4 @@ These are parsed ahead of time and compiled into the library.
 * Implement detectors to cover the remainder of the functionality
 * AWS lambda function implementation
 * Shuffle recently used rules to the top of the vector
+* Multiple threads for running the rules for individual mimes

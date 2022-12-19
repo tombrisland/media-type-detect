@@ -1,9 +1,10 @@
 #![feature(let_chains)]
+extern crate core;
 extern crate rule_def;
 extern crate xml;
 
+use std::{env, u8};
 use std::collections::{HashMap, VecDeque};
-use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -17,13 +18,8 @@ use xml::reader::XmlEvent;
 use rule_def::{GlobRule, GlobType, MagicRule, Match, MediaTypeRegistry, Multi, Offset, Rule, Single};
 
 const TIKA_MIMETYPES_PATH: &str = "./tika-mimetypes.xml";
-const OUT_FILE: &str = "rules.rs";
 
-// The un-eval library sometimes adds unnecessary snippets
-const REMOVE_FROM_OUTPUT: [&str; 1] = [
-    ".into_iter().collect()"
-];
-const EMPTY: &str = "";
+const RULE_REGISTRY_FILE: &str = "rule_registry.rs";
 
 type XmlElement = (OwnedName, Vec<OwnedAttribute>);
 
@@ -38,7 +34,7 @@ fn main() {
     // Initialise parser and extract rules from XML
     let type_registry: MediaTypeRegistry = parse_xml_rules(EventReader::new(reader));
 
-    let path: PathBuf = Path::new(&out_dir).join(OUT_FILE);
+    let path: PathBuf = Path::new(&out_dir).join(RULE_REGISTRY_FILE);
 
     let mut open_options: OpenOptions = OpenOptions::new();
     open_options.write(true).append(false);
@@ -49,13 +45,8 @@ fn main() {
 
     let mut writer: BufWriter<File> = BufWriter::new(out_file);
 
-    let mut output_string: String = uneval::to_string(type_registry)
-        .expect("Failed to serialise rules as rust source");
-
-    // // Remove any extra code to reduce binary size
-    // for remove_str in REMOVE_FROM_OUTPUT {
-    //     output_string = output_string.replace(remove_str, EMPTY);
-    // }
+    let output_string: String = uneval::to_string(type_registry)
+        .expect("Failed to serialise rule registry as rust source");
 
     writer.write_all(output_string.as_bytes()).unwrap();
 }
@@ -78,6 +69,66 @@ const MIN_SHOULD_MATCH_FIELD: &str = "minShouldMatch";
 
 const SUB_CLASS_ELEMENT: &str = "sub-class-of";
 
+const HEX_PREFIX: &str = "0x";
+
+const BACKSLASH_INT: u8 = 92;
+const BACKSLASH_CHAR: char = '\\';
+
+fn parse_match(value: &String) -> Vec<u8> {
+    // Value must be a single hex value
+    if value.starts_with(HEX_PREFIX) {
+        let (_, hex_str) = value.split_once(HEX_PREFIX).unwrap();
+
+        let x: Vec<u8> = (0..hex_str.len())
+            .step_by(2)
+            .map(|idx| u8::from_str_radix(&hex_str[idx..idx + 2], 16).unwrap())
+            .collect();
+
+        // TODO match every hex byte just by knowing the length
+        return x;
+    }
+
+    let chars: Vec<char> = value.chars().collect();
+
+    let mut decoded_bytes: Vec<u8> = vec![];
+
+    let mut idx: usize = 0;
+    let max: usize = chars.len();
+
+    while idx < max {
+        let current: &char = chars.get(idx).unwrap();
+
+        if current == &BACKSLASH_CHAR {
+            match chars.get(idx + 1).unwrap() {
+                // If we have a double backslash
+                &BACKSLASH_CHAR => {
+                    // Decode as a single
+                    decoded_bytes.push(BACKSLASH_INT);
+                    idx += 1;
+                }
+                // Decode following characters as a hex value
+                &'x' => {
+                    let hex_str: String = chars.as_slice()[idx + 2..idx + 4].iter().collect();
+                    let number: u8 = u8::from_str_radix(&hex_str, 16).unwrap();
+
+                    decoded_bytes.push(number);
+
+                    idx += 3;
+                }
+                // TODO impl the other mental formats
+                _ => {}
+            };
+        } else {
+            for b in current.to_string().as_bytes() {
+                decoded_bytes.push(*b);
+            }
+        }
+        idx += 1;
+    }
+
+    decoded_bytes
+}
+
 // Create a match condition from an XML attribute
 fn create_match_condition(attributes: &Vec<OwnedAttribute>) -> Match {
     match extract_xml_field(&attributes, MIN_SHOULD_MATCH_FIELD) {
@@ -89,17 +140,18 @@ fn create_match_condition(attributes: &Vec<OwnedAttribute>) -> Match {
         }
         // Regular magic condition
         None => {
-            let bytes: Vec<u8> =
-                extract_xml_field(&attributes, VALUE_FIELD).unwrap().as_bytes().to_vec();
+            let string: String = extract_xml_field(&attributes, VALUE_FIELD).unwrap();
 
             Match::Single(Single {
                 offset: Offset::from_attr(extract_xml_field(&attributes, OFFSET_FIELD)),
-                bytes,
+                bytes: parse_match(&string),
                 conditions: vec![],
             })
         }
     }
 }
+
+const EMPTY: &str = "";
 
 // Create a glob condition from an XML attribute
 fn create_glob_rule(attributes: &Vec<OwnedAttribute>) -> GlobRule {
@@ -143,7 +195,8 @@ fn create_magic_rule(attributes: &Vec<OwnedAttribute>) -> MagicRule {
 
 fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegistry {
     let mut rules_registry: HashMap<String, Vec<Rule>> = Default::default();
-    let mut child_types: HashMap<String, Vec<String>> = Default::default();
+    let mut root_types: Vec<String> = vec![];
+    let mut sub_types: HashMap<String, Vec<String>> = Default::default();
 
     // Parent XML elements
     let mut elements: VecDeque<XmlElement> = Default::default();
@@ -209,17 +262,21 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegis
 
                         if let Some(parent) = curr_parent.clone() {
                             // Insert a new entry or add to the existing one
-                            if let Some(children) = child_types.get_mut(&parent) {
+                            if let Some(children) = sub_types.get_mut(&parent) {
                                 children.push(media_type.clone());
                             } else {
-                                child_types.insert(parent, vec![media_type.clone()]);
+                                sub_types.insert(parent, vec![media_type.clone()]);
                             }
+                        } else {
+                            // No parent makes this a root type
+                            root_types.push(media_type.clone());
                         }
 
                         rules_registry.insert(media_type, curr_rules.clone());
 
                         // Clear rules for the next entry
                         curr_rules.clear();
+                        curr_parent = None;
                     }
                     _ => {}
                 }
@@ -229,8 +286,10 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegis
     };
 
     MediaTypeRegistry {
-        rules_registry: rules_registry,
-        child_types,
+        root_types,
+        sub_types,
+
+        rules_registry,
     }
 }
 
