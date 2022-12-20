@@ -13,7 +13,6 @@ pub(crate) fn run_magic(buf: &[u8], magic_rule: &MagicRule) -> bool {
                 let from: usize = single.offset.from as usize;
 
                 // TODO could do partial magic matches if file isn't long enough
-
                 if buf.len() > from {
                     let to: usize = min(single.bytes.len() + from, buf.len());
                     let slice: &[u8] = &buf[from..to];

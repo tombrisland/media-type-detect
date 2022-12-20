@@ -15,7 +15,7 @@ use xml::EventReader;
 use xml::name::OwnedName;
 use xml::reader::XmlEvent;
 
-use rule_def::{GlobRule, GlobType, MagicRule, Match, MediaTypeRegistry, Multi, Offset, Rule, Single};
+use rule_def::{GlobRule, GlobType, MagicRule, Match, MediaTypeRegistry, Multi, Offset, Single};
 
 const TIKA_MIMETYPES_PATH: &str = "./tika-mimetypes.xml";
 
@@ -80,6 +80,7 @@ fn parse_match(value: &String) -> Vec<u8> {
         let (_, hex_str) = value.split_once(HEX_PREFIX).unwrap();
 
         let x: Vec<u8> = (0..hex_str.len())
+            // TODO some cleanup and commenting here
             .step_by(2)
             .map(|idx| u8::from_str_radix(&hex_str[idx..idx + 2], 16).unwrap())
             .collect();
@@ -154,7 +155,7 @@ fn create_match_condition(attributes: &Vec<OwnedAttribute>) -> Match {
 const EMPTY: &str = "";
 
 // Create a glob condition from an XML attribute
-fn create_glob_rule(attributes: &Vec<OwnedAttribute>) -> GlobRule {
+fn create_glob_rule(media_type: &Option<String>, attributes: &Vec<OwnedAttribute>) -> GlobRule {
     // Mandatory field on all glob entries
     let pattern: String = extract_xml_field(&attributes, PATTERN_FIELD).unwrap();
 
@@ -177,32 +178,33 @@ fn create_glob_rule(attributes: &Vec<OwnedAttribute>) -> GlobRule {
 
     GlobRule {
         // Asterisk behaviour is covered by GlobType
+        media_type: media_type.as_ref().unwrap().clone(),
         pattern: pattern.replace(ASTERISK, EMPTY),
         glob_type,
     }
 }
 
 // Create a magic rule from an XML attribute and any nested match blocks
-fn create_magic_rule(attributes: &Vec<OwnedAttribute>) -> MagicRule {
+fn create_magic_rule(media_type: &Option<String>, attributes: &Vec<OwnedAttribute>) -> MagicRule {
     let priority: u8 = match extract_xml_field(&attributes, PRIORITY_FIELD) {
         Some(str) => u8::from_str(str.as_str()).unwrap(),
         // Default priority to zero if not populated
         None => 0
     };
 
-    MagicRule { priority, conditions: vec![] }
+    MagicRule { media_type: media_type.as_ref().unwrap().clone(), priority, conditions: vec![] }
 }
 
 fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegistry {
-    let mut rules_registry: HashMap<String, Vec<Rule>> = Default::default();
-    let mut root_types: Vec<String> = vec![];
+    let mut glob_rules: Vec<GlobRule> = vec![];
+    let mut magic_rules: Vec<MagicRule> = vec![];
+
     let mut sub_types: HashMap<String, Vec<String>> = Default::default();
 
     // Parent XML elements
     let mut elements: VecDeque<XmlElement> = Default::default();
 
-    // Temporary store of rules per media type
-    let mut curr_rules: Vec<Rule> = vec![];
+    let mut curr_type : Option<String> = None;
     let mut curr_magic: Option<MagicRule> = None;
     // If this type has a parent
     let mut curr_parent: Option<String> = None;
@@ -214,12 +216,14 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegis
         match event {
             Ok(XmlEvent::StartElement { name, attributes, .. }) => {
                 match name.local_name.as_str() {
+                    // Mime type is a mandatory field
+                    MIME_TYPE_ELEMENT => curr_type = extract_xml_field(&attributes, MIME_TYPE_FIELD),
                     // Glob rules can be added immediately
-                    GLOB_ELEMENT => curr_rules.push(Rule::Glob(create_glob_rule(&attributes))),
+                    GLOB_ELEMENT => glob_rules.push(create_glob_rule(&curr_type, &attributes)),
                     // Push match elements onto the stack to support deep nesting
                     MATCH_ELEMENT => nested_match_blocks.push(create_match_condition(&attributes)),
                     // Create a magic entry to add nested rules onto
-                    MAGIC_ELEMENT => curr_magic = Some(create_magic_rule(&attributes)),
+                    MAGIC_ELEMENT => curr_magic = Some(create_magic_rule(&curr_type, &attributes)),
                     // Add a relationship into the children map
                     SUB_CLASS_ELEMENT => curr_parent = Some(extract_xml_field(&attributes, MIME_TYPE_FIELD).unwrap()),
                     _ => {}
@@ -251,7 +255,7 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegis
                     }
                     // Add this completed magic block to the rules
                     MAGIC_ELEMENT => {
-                        curr_rules.push(Rule::Magic(curr_magic.unwrap()));
+                        magic_rules.push(curr_magic.unwrap());
 
                         curr_magic = None;
                     }
@@ -267,15 +271,8 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegis
                             } else {
                                 sub_types.insert(parent, vec![media_type.clone()]);
                             }
-                        } else {
-                            // No parent makes this a root type
-                            root_types.push(media_type.clone());
                         }
 
-                        rules_registry.insert(media_type, curr_rules.clone());
-
-                        // Clear rules for the next entry
-                        curr_rules.clear();
                         curr_parent = None;
                     }
                     _ => {}
@@ -286,10 +283,10 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegis
     };
 
     MediaTypeRegistry {
-        root_types,
         sub_types,
 
-        rules_registry,
+        glob_rules,
+        magic_rules,
     }
 }
 

@@ -6,6 +6,8 @@
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/detect_media_type/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/rule_gen/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/detect_media_type/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/rule_gen/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
       <excludeFolder url="file://$MODULE_DIR$/detect_media_type/target" />
       <excludeFolder url="file://$MODULE_DIR$/rule_def/target" />

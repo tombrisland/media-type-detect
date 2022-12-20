@@ -37,17 +37,15 @@
      you can here, then provide a Custom Detector for the rest
 -->
 <mime-info xmlns:tika="https://tika.apache.org/">
-  <mime-type type="application/andrew-inset">
-    <magic priority="55">
-      <match minShouldMatch="2">
-        <match value="user-agent:" type="stringignorecase" offset="0"/>
-        <match value="sitemap:" type="stringignorecase" offset="0"/>
-        <match value="\nuser-agent:" type="stringignorecase" offset="0:1000"/>
-        <match value="\nallow:" type="stringignorecase" offset="0:1000"/>
-        <match value="\ndisallow:" type="stringignorecase" offset="0:1000"/>
-        <match value="\nsitemap:" type="stringignorecase" offset="0:1000"/>
-      </match>
+  <mime-type type="image/heic">
+    <alias   type="image/hevc"/>
+    <_comment>HEIF Image using HEVC Codec</_comment>
+    <acronym>HEIC</acronym>
+    <magic priority="60">
+      <match value="ftypheic" type="string" offset="4"/>
+      <match value="ftypheix" type="string" offset="4"/>
     </magic>
+    <glob pattern="*.heic"/>
   </mime-type>
 
 

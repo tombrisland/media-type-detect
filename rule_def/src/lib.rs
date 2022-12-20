@@ -6,11 +6,11 @@ use std::str::FromStr;
 
 #[derive(Clone, Serialize, Debug)]
 pub struct MediaTypeRegistry {
-    pub root_types: Vec<String>,
     // Map of parent types to their children
     pub sub_types: HashMap<String, Vec<String>>,
-    // Map of type to rules
-    pub rules_registry: HashMap<String, Vec<Rule>>,
+
+    pub glob_rules: Vec<GlobRule>,
+    pub magic_rules: Vec<MagicRule>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -21,6 +21,7 @@ pub enum Rule {
 
 #[derive(Clone, Serialize, Debug)]
 pub struct MagicRule {
+    pub media_type: String,
     // Priority over other magic rules
     pub priority: u8,
     pub conditions: Vec<Match>,
@@ -79,6 +80,8 @@ pub enum MatchValueType {
 
 #[derive(Clone, Serialize, Debug)]
 pub struct GlobRule {
+    pub media_type: String,
+
     pub pattern: String,
     pub glob_type: GlobType,
 }
