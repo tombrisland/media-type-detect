@@ -10,6 +10,8 @@ pub struct MediaTypeRegistry {
     pub sub_types: HashMap<String, Vec<String>>,
 
     pub glob_rules: Vec<GlobRule>,
+
+    // Magic rules sorted by priority high -> low
     pub magic_rules: Vec<MagicRule>,
 }
 

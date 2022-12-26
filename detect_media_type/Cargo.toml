@@ -8,5 +8,5 @@ rule_gen = {path= '../rule_gen' }
 rule_def = {path='../rule_def'}
 log = "0.4.17"
 
-#[profile.test]
-#opt-level = 0
+[profile.test]
+opt-level = 0

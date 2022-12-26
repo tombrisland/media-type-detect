@@ -204,7 +204,7 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegis
     // Parent XML elements
     let mut elements: VecDeque<XmlElement> = Default::default();
 
-    let mut curr_type : Option<String> = None;
+    let mut curr_type: Option<String> = None;
     let mut curr_magic: Option<MagicRule> = None;
     // If this type has a parent
     let mut curr_parent: Option<String> = None;
@@ -281,6 +281,8 @@ fn parse_xml_rules(event_reader: EventReader<BufReader<File>>) -> MediaTypeRegis
             _ => {}
         }
     };
+
+    magic_rules.sort_by(|a, b| a.priority.partial_cmp(&b.priority).unwrap());
 
     MediaTypeRegistry {
         sub_types,

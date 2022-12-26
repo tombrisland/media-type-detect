@@ -1,13 +1,15 @@
 #![feature(let_chains)]
 
+extern crate core;
+
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use log::{debug};
+use log::debug;
 
-use rule_def::{MediaTypeRegistry};
+use rule_def::MediaTypeRegistry;
 
 use crate::glob::run_glob;
 use crate::magic::run_magic;
@@ -92,8 +94,17 @@ impl MediaTypeDetector {
     ) -> Vec<String> {
         let mut possible_types: Vec<String> = vec![];
 
+        // The priority of the last match
+        let mut last_match_priority: u8 = 0;
+
         for magic_rule in &self.registry.magic_rules {
             let media_type: &String = &magic_rule.media_type;
+
+            if magic_rule.priority < last_match_priority {
+                // None of the following clauses will have higher priority
+                return possible_types;
+            }
+
             // Skip rule if we've already matched a child type
             if possible_types.iter().any(|possible|
                 self.is_sub_type(media_type, possible)) {
@@ -109,6 +120,8 @@ impl MediaTypeDetector {
             // If the magic succeeds add to the possible types list
             if run_magic(buf, magic_rule) {
                 possible_types.push(magic_rule.media_type.clone());
+
+                last_match_priority = magic_rule.priority;
             }
         }
 
